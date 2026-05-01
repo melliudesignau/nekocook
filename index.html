@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Nekocook 🐾</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: #FDFAF6; color: #1A1814; -webkit-font-smoothing: antialiased; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+  @keyframes pop { 0%{transform:scale(1)} 50%{transform:scale(1.35)} 100%{transform:scale(1)} }
+  input:focus { outline: none; border-color: #2D6A4F !important; }
+  ::-webkit-scrollbar { width: 4px; } 
+  ::-webkit-scrollbar-thumb { background: #EDE8E0; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ── THEME ──────────────────────────────────────────────────────────────────
+const T = {
+  bg: "#FDFAF6", surface: "#FFFFFF", border: "#EDE8E0",
+  ink: "#1A1814", muted: "#8A8278", forest: "#2D6A4F",
+  forestLight: "#52B788", cream: "#F0EBE3", clay: "#C77B4A",
+  amber: "#E9A84C", coral: "#E76F51",
+  tag1: "#E8F4EE", tag1t: "#2D6A4F",
+  tag2: "#FDF0E8", tag2t: "#C77B4A",
+};
+
+// ── DATA ───────────────────────────────────────────────────────────────────
+const CUISINES = ["Any","American","Chinese","Classic","Indian","Italian","Japanese","Korean","Mediterranean","Mexican","Taiwanese","Thai","Vietnamese"];
+const FORMATS = [
+  { id:"211", label:"2-1-1 plate", tip:"2 veg · 1 protein · 1 carb — a balanced plate in one cook" },
+  { id:"onepot", label:"One pot / batch" },
+  { id:"any", label:"Surprise me?" },
+];
+const DIETARIES = ["None","Vegetarian","Vegan","Gluten free","No shellfish","No dairy"];
+const PROTEINS = ["Chicken","Beef","Pork","Salmon","Tofu","Eggs","Prawns","Lamb","Tuna"];
+const VEGS = ["Broccoli","Spinach","Capsicum","Zucchini","Carrot","Bok choy","Mushroom","Kale","Corn","Eggplant"];
+
+// ── HELPERS ────────────────────────────────────────────────────────────────
+function store(key, val) {
+  try {
+    if (val === undefined) { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; }
+    localStorage.setItem(key, JSON.stringify(val));
+  } catch { return null; }
+}
+
+async function askClaude(apiKey, system, user, maxTokens = 2000) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-5",
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role:"user", content: user }]
+    }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.content.map(b => b.text || "").join("");
+}
+
+function parseJSON(raw) {
+  const clean = raw.replace(/```json|```/g,"").trim();
+  const si = clean.indexOf("[") !== -1 ? clean.indexOf("[") : clean.indexOf("{");
+  const ei = clean.lastIndexOf(clean.indexOf("[") !== -1 ? "]" : "}");
+  return JSON.parse(clean.slice(si, ei + 1));
+}
+
+// ── UI ATOMS ───────────────────────────────────────────────────────────────
+function Btn({ children, onClick, disabled, variant="primary", small }) {
+  const base = {
+    border:"none", cursor: disabled ? "not-allowed" : "pointer",
+    fontFamily:"'DM Sans',sans-serif", fontWeight:"500", borderRadius:"50px",
+    transition:"all 0.15s", opacity: disabled ? 0.4 : 1,
+    padding: small ? "0.45rem 1.1rem" : "0.85rem 2rem",
+    fontSize: small ? "0.78rem" : "0.88rem",
+  };
+  const variants = {
+    primary: { background: T.forest, color:"#fff" },
+    secondary: { background:"transparent", color: T.forest, border:`1.5px solid ${T.forest}` },
+    ghost: { background: T.cream, color: T.ink },
+    danger: { background:"transparent", color:"#c0392b", border:`1px solid #e0b0b0` },
+  };
+  return <button style={{...base,...variants[variant]}} onClick={onClick} disabled={disabled}>{children}</button>;
+}
+
+function Pill({ label, active, onClick, tip, small }) {
+  const [showTip, setShowTip] = useState(false);
+  return (
+    <div style={{ position:"relative", display:"inline-flex", alignItems:"center", gap:"3px" }}>
+      <button onClick={onClick} style={{
+        padding: small ? "0.25rem 0.65rem" : "0.35rem 0.85rem",
+        borderRadius:"50px", border:`1.5px solid ${active ? T.forest : T.border}`,
+        background: active ? T.tag1 : T.surface, color: active ? T.forest : T.muted,
+        fontFamily:"'DM Sans',sans-serif", fontSize: small ? "0.72rem" : "0.8rem",
+        fontWeight: active ? "500" : "400", cursor:"pointer", transition:"all 0.15s",
+      }}>{label}</button>
+      {tip && (
+        <button
+          onClick={e => { e.stopPropagation(); setShowTip(!showTip); }}
+          style={{
+            width:15, height:15, borderRadius:"50%", border:`1px solid ${T.border}`,
+            background: T.cream, color: T.muted, fontSize:"8px", fontWeight:"700",
+            cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+            fontFamily:"'DM Sans',sans-serif", flexShrink:0,
+          }}>i</button>
+      )}
+      {tip && showTip && (
+        <div style={{
+          position:"absolute", bottom:"120%", left:0, background: T.ink, color:"#fff",
+          padding:"0.5rem 0.75rem", borderRadius:"8px", fontSize:"0.73rem",
+          width:"190px", lineHeight:1.5, zIndex:200, boxShadow:"0 4px 16px rgba(0,0,0,0.2)",
+        }}>{tip}<br/><button onClick={() => setShowTip(false)} style={{ marginTop:"0.35rem", background:"none", border:"none", color:"#aaa", fontSize:"0.68rem", cursor:"pointer" }}>✕ close</button></div>
+      )}
+    </div>
+  );
+}
+
+function Spinner({ text="One moment…" }) {
+  return (
+    <div style={{ textAlign:"center", padding:"4rem 1rem" }}>
+      <div style={{ width:28,height:28,border:`2px solid ${T.border}`,borderTopColor:T.clay,borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 1rem" }} />
+      <p style={{ color:T.muted, fontSize:"0.85rem", animation:"pulse 1.5s ease infinite" }}>{text}</p>
+    </div>
+  );
+}
+
+function Tag({ label, type="green" }) {
+  return (
+    <span style={{
+      background: type==="green" ? T.tag1 : T.tag2,
+      color: type==="green" ? T.tag1t : T.tag2t,
+      padding:"0.15rem 0.55rem", borderRadius:"20px",
+      fontSize:"0.68rem", fontWeight:"500",
+    }}>{label}</span>
+  );
+}
+
+function SectionLabel({ children }) {
+  return <p style={{ fontSize:"0.68rem", fontWeight:"600", letterSpacing:"1.2px", textTransform:"uppercase", color:T.muted, marginBottom:"0.65rem" }}>{children}</p>;
+}
+
+// ── API KEY SCREEN ─────────────────────────────────────────────────────────
+function ApiKeyScreen({ onSave }) {
+  const [key, setKey] = useState("");
+  return (
+    <div style={{ maxWidth:400, margin:"0 auto", padding:"3rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <div style={{ fontSize:"2.8rem", marginBottom:"1.25rem" }}>🐾</div>
+      <h1 style={{ fontFamily:"'Lora',serif", fontSize:"1.9rem", fontWeight:400, marginBottom:"0.5rem" }}>Welcome to Nekocook</h1>
+      <p style={{ color:T.muted, fontSize:"0.88rem", lineHeight:1.75, marginBottom:"2rem" }}>
+        To get started, paste your Anthropic API key below.<br/>It's stored only on your device — never shared.
+      </p>
+      <input
+        type="password" placeholder="sk-ant-api..." value={key}
+        onChange={e => setKey(e.target.value)}
+        onKeyDown={e => e.key==="Enter" && key.trim() && onSave(key.trim())}
+        style={{
+          width:"100%", padding:"0.9rem 1rem", borderRadius:"10px",
+          border:`1.5px solid ${T.border}`, fontFamily:"'DM Sans',sans-serif",
+          fontSize:"0.88rem", background:T.surface, color:T.ink, marginBottom:"1rem",
+        }}
+      />
+      <Btn onClick={() => key.trim() && onSave(key.trim())} disabled={!key.trim()}>Let's cook 🍳</Btn>
+      <p style={{ color:T.muted, fontSize:"0.75rem", marginTop:"1rem", lineHeight:1.6 }}>
+        Get your key at <strong>platform.claude.com</strong> → API Keys
+      </p>
+    </div>
+  );
+}
+
+// ── WELCOME SCREEN ─────────────────────────────────────────────────────────
+function WelcomeScreen({ onContinue }) {
+  return (
+    <div style={{ maxWidth:400, margin:"0 auto", padding:"3rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <div style={{ fontSize:"3rem", marginBottom:"1.5rem" }}>🐾</div>
+      <h1 style={{ fontFamily:"'Lora',serif", fontSize:"2rem", fontWeight:400, fontStyle:"italic", lineHeight:1.35, marginBottom:"1rem" }}>
+        Another recipe app?<br/>Not quite.
+      </h1>
+      <p style={{ color:T.muted, fontSize:"0.9rem", lineHeight:1.8, marginBottom:"0.75rem" }}>
+        Nekocook is for people who want to eat well but don't want to spend their Sunday watching a 47-step reel.
+      </p>
+      <p style={{ color:T.muted, fontSize:"0.9rem", lineHeight:1.8, marginBottom:"2.5rem" }}>
+        Simple ingredients. Quick meals. No grocery list regret.
+      </p>
+      <div style={{ display:"flex", flexDirection:"column", gap:"0.75rem" }}>
+        <Btn onClick={() => onContinue("email")}>Continue with email</Btn>
+        <Btn variant="secondary" onClick={() => onContinue("google")}>Continue with Google</Btn>
+        <Btn variant="ghost" onClick={() => onContinue("guest")}>Continue as guest</Btn>
+      </div>
+      <p style={{ color:T.muted, fontSize:"0.72rem", marginTop:"1.5rem", textAlign:"center" }}>
+        First time? Your account is created automatically.
+      </p>
+    </div>
+  );
+}
+
+// ── PREFERENCES SCREEN ─────────────────────────────────────────────────────
+function PreferencesScreen({ initial={}, onSave, onBack }) {
+  const [cuisine, setCuisine] = useState(initial.cuisine || "Any");
+  const [format, setFormat] = useState(initial.format || "any");
+  const [dietary, setDietary] = useState(initial.dietary || ["None"]);
+
+  function toggleDietary(d) {
+    if (d === "None") { setDietary(["None"]); return; }
+    setDietary(prev => {
+      const next = prev.filter(x => x !== "None");
+      const updated = prev.includes(d) ? next.filter(x => x !== d) : [...next, d];
+      return updated.length ? updated : ["None"];
+    });
+  }
+
+  return (
+    <div style={{ maxWidth:500, margin:"0 auto", padding:"2rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      {onBack && <button onClick={onBack} style={{ background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:"0.83rem",marginBottom:"1.5rem",fontFamily:"'DM Sans',sans-serif" }}>← Back</button>}
+      <h2 style={{ fontFamily:"'Lora',serif", fontSize:"1.6rem", fontWeight:400, marginBottom:"0.35rem" }}>Your preferences</h2>
+      <p style={{ color:T.muted, fontSize:"0.82rem", marginBottom:"2rem" }}>Edit anytime in Settings.</p>
+
+      <div style={{ marginBottom:"1.75rem" }}>
+        <SectionLabel>Cuisine</SectionLabel>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem" }}>
+          {CUISINES.map(c => <Pill key={c} label={c} active={cuisine===c} onClick={() => setCuisine(c)} />)}
+        </div>
+      </div>
+
+      <div style={{ marginBottom:"1.75rem" }}>
+        <SectionLabel>Meal format</SectionLabel>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem" }}>
+          {FORMATS.map(f => <Pill key={f.id} label={f.label} active={format===f.id} onClick={() => setFormat(f.id)} tip={f.tip} />)}
+        </div>
+      </div>
+
+      <div style={{ marginBottom:"2.5rem" }}>
+        <SectionLabel>Dietary (pick all that apply)</SectionLabel>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem" }}>
+          {DIETARIES.map(d => <Pill key={d} label={d} active={dietary.includes(d)} onClick={() => toggleDietary(d)} />)}
+        </div>
+      </div>
+
+      <Btn onClick={() => onSave({ cuisine, format, dietary })}>Save & continue</Btn>
+    </div>
+  );
+}
+
+// ── DISCOVER SCREEN ────────────────────────────────────────────────────────
+function DiscoverScreen({ prefs, apiKey, savedMeals, onSave, onEditPrefs }) {
+  const [mode, setMode] = useState(null);
+  const [dietaryOverride, setDietaryOverride] = useState(prefs.dietary || ["None"]);
+  const [proteins, setProteins] = useState([]);
+  const [vegs, setVegs] = useState([]);
+  const [customIngredient, setCustomIngredient] = useState("");
+  const [customList, setCustomList] = useState([]);
+  const [meals, setMeals] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [cardIdx, setCardIdx] = useState(0);
+  const [error, setError] = useState("");
+  const [saveAnim, setSaveAnim] = useState(false);
+
+  const currentMeal = meals[cardIdx];
+  const isSaved = currentMeal && savedMeals.some(m => m.name === currentMeal.name);
+
+  function toggleItem(list, setList, item) {
+    setList(prev => prev.includes(item) ? prev.filter(x => x !== item) : [...prev, item]);
+  }
+
+  function toggleDietary(d) {
+    if (d === "None") { setDietaryOverride(["None"]); return; }
+    setDietaryOverride(prev => {
+      const next = prev.filter(x => x !== "None");
+      const updated = prev.includes(d) ? next.filter(x => x !== d) : [...next, d];
+      return updated.length ? updated : ["None"];
+    });
+  }
+
+  async function generate(append = false) {
+    setLoading(true);
+    setError("");
+    const formatLabel = FORMATS.find(f => f.id === prefs.format)?.label || "any";
+    const dietary = dietaryOverride.includes("None") ? "no dietary restrictions" : dietaryOverride.join(", ");
+    const ingredientHint = mode === "ingredients" && [...proteins,...vegs,...customList].length
+      ? `Use these ingredients: ${[...proteins,...vegs,...customList].join(", ")}.` : "";
+    const existing = append && meals.length ? `Do not repeat these: ${meals.map(m=>m.name).join(", ")}.` : "";
+
+    const system = `You are a meal planning assistant for an Australian home cook. Suggest healthy balanced meals under 30 minutes using simple everyday ingredients from Woolworths or Coles. No specialty one-off ingredients. Solo portions. Respond ONLY with a valid JSON array, no markdown, no explanation.`;
+    const user = `Generate 10 varied meal suggestions.
+Cuisine: ${prefs.cuisine}.
+Format: ${formatLabel}.
+Dietary: ${dietary}.
+${ingredientHint}
+${existing}
+Return ONLY this JSON array:
+[{"name":"...","cuisine":"...","format":"211 or onepot or any","time":"X min","desc":"One sentence description with key flavours","steps":["Step 1...","Step 2...","Step 3...","Step 4..."],"ingredients":["ingredient (qty)","..."]}]`;
+
+    try {
+      const raw = await askClaude(apiKey, system, user, 2500);
+      const data = parseJSON(raw);
+      setMeals(prev => append ? [...prev, ...data] : data);
+      if (!append) setCardIdx(0);
+    } catch(e) {
+      setError("Couldn't reach AI. Check your API key in Settings.");
+    }
+    setLoading(false);
+  }
+
+  function handleSave() {
+    if (!currentMeal) return;
+    onSave(currentMeal);
+    setSaveAnim(true);
+    setTimeout(() => setSaveAnim(false), 600);
+  }
+
+  // MODE SELECTION
+  if (!mode) return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:"2rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <h2 style={{ fontFamily:"'Lora',serif", fontSize:"1.6rem", fontWeight:400, fontStyle:"italic", marginBottom:"1rem" }}>What's for dinner?</h2>
+
+      {/* Active prefs pills */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem", alignItems:"center", marginBottom:"2rem", padding:"0.75rem", background:T.cream, borderRadius:"10px" }}>
+        <span style={{ fontSize:"0.72rem", color:T.muted, marginRight:"0.25rem" }}>Your prefs:</span>
+        {[prefs.cuisine, FORMATS.find(f=>f.id===prefs.format)?.label, ...(prefs.dietary||[])].filter(Boolean).map((p,i) => (
+          <button key={i} onClick={onEditPrefs} style={{
+            padding:"0.2rem 0.6rem", borderRadius:"20px", border:`1px solid ${T.border}`,
+            background:T.surface, color:T.forest, fontSize:"0.73rem", cursor:"pointer",
+            fontFamily:"'DM Sans',sans-serif", fontWeight:"500",
+          }}>{p}</button>
+        ))}
+        <button onClick={onEditPrefs} style={{ padding:"0.2rem 0.55rem", borderRadius:"20px", border:`1px dashed ${T.muted}`, background:"transparent", color:T.muted, fontSize:"0.72rem", cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>edit ✎</button>
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
+        {[
+          { mode:"surprise", icon:"🎲", title:"Surprise me", desc:"AI picks meals based on your preferences" },
+          { mode:"ingredients", icon:"🥦", title:"My ingredients", desc:"Tell us what you have, we'll suggest meals" },
+        ].map(opt => (
+          <button key={opt.mode} onClick={() => setMode(opt.mode)} style={{
+            padding:"1.4rem 1.5rem", borderRadius:"16px", border:`1.5px solid ${T.border}`,
+            background:T.surface, textAlign:"left", cursor:"pointer", transition:"border-color 0.15s",
+            display:"flex", alignItems:"center", gap:"1rem",
+          }}>
+            <span style={{ fontSize:"2rem" }}>{opt.icon}</span>
+            <div>
+              <div style={{ fontFamily:"'Lora',serif", fontSize:"1.05rem", fontWeight:400, marginBottom:"0.2rem" }}>{opt.title}</div>
+              <div style={{ fontSize:"0.8rem", color:T.muted }}>{opt.desc}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  // SURPRISE ME — dietary confirm
+  if (mode === "surprise" && meals.length === 0 && !loading) return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:"2rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <button onClick={() => setMode(null)} style={{ background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:"0.83rem",marginBottom:"1.5rem",fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
+      <h2 style={{ fontFamily:"'Lora',serif", fontSize:"1.4rem", fontWeight:400, marginBottom:"0.35rem" }}>Dietary for this session</h2>
+      <p style={{ color:T.muted, fontSize:"0.82rem", marginBottom:"1.5rem" }}>Your saved settings are pre-selected. Override just for now if you like.</p>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem", marginBottom:"2rem" }}>
+        {DIETARIES.map(d => <Pill key={d} label={d} active={dietaryOverride.includes(d)} onClick={() => toggleDietary(d)} />)}
+      </div>
+      {error && <p style={{ color:T.coral, fontSize:"0.82rem", marginBottom:"1rem" }}>{error}</p>}
+      <Btn onClick={() => generate()}>Generate meals ✦</Btn>
+    </div>
+  );
+
+  // MY INGREDIENTS
+  if (mode === "ingredients" && meals.length === 0 && !loading) return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:"2rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <button onClick={() => setMode(null)} style={{ background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:"0.83rem",marginBottom:"1.5rem",fontFamily:"'DM Sans',sans-serif" }}>← Back</button>
+      <h2 style={{ fontFamily:"'Lora',serif", fontSize:"1.4rem", fontWeight:400, marginBottom:"0.35rem" }}>What do you have?</h2>
+      <p style={{ color:T.muted, fontSize:"0.82rem", marginBottom:"1.5rem" }}>Pick protein and veg. Pantry staples (garlic, oil, soy sauce etc) are assumed.</p>
+
+      <div style={{ marginBottom:"1.5rem" }}>
+        <SectionLabel>🥩 Protein</SectionLabel>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem" }}>
+          {PROTEINS.map(p => <Pill key={p} label={p} active={proteins.includes(p)} onClick={() => toggleItem(proteins, setProteins, p)} />)}
+        </div>
+      </div>
+
+      <div style={{ marginBottom:"1.5rem" }}>
+        <SectionLabel>🥦 Veg</SectionLabel>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem" }}>
+          {VEGS.map(v => <Pill key={v} label={v} active={vegs.includes(v)} onClick={() => toggleItem(vegs, setVegs, v)} />)}
+        </div>
+      </div>
+
+      <div style={{ marginBottom:"2rem" }}>
+        <SectionLabel>+ Add your own</SectionLabel>
+        <div style={{ display:"flex", gap:"0.5rem", marginBottom:"0.5rem" }}>
+          <input value={customIngredient} onChange={e => setCustomIngredient(e.target.value)}
+            onKeyDown={e => { if(e.key==="Enter" && customIngredient.trim()) { setCustomList(p=>[...p,customIngredient.trim()]); setCustomIngredient(""); }}}
+            placeholder="e.g. miso paste"
+            style={{ flex:1, padding:"0.6rem 0.85rem", borderRadius:"8px", border:`1.5px solid ${T.border}`, fontFamily:"'DM Sans',sans-serif", fontSize:"0.83rem", background:T.surface, color:T.ink }} />
+          <Btn small onClick={() => { if(customIngredient.trim()) { setCustomList(p=>[...p,customIngredient.trim()]); setCustomIngredient(""); }}}>Add</Btn>
+        </div>
+        {customList.length > 0 && (
+          <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem" }}>
+            {customList.map((c,i) => (
+              <span key={i} style={{ background:T.tag2, color:T.tag2t, padding:"0.15rem 0.55rem", borderRadius:"20px", fontSize:"0.73rem", cursor:"pointer" }}
+                onClick={() => setCustomList(p => p.filter((_,j) => j!==i))}>
+                {c} ✕
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {error && <p style={{ color:T.coral, fontSize:"0.82rem", marginBottom:"1rem" }}>{error}</p>}
+      <Btn onClick={() => generate()} disabled={!proteins.length && !vegs.length && !customList.length}>
+        Find meals ✦
+      </Btn>
+    </div>
+  );
+
+  if (loading) return <Spinner text="Finding meals for you…" />;
+
+  // MEAL CARDS
+  if (meals.length > 0 && currentMeal) return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:"1.5rem", animation:"fadeUp 0.3s ease" }}>
+
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1.25rem" }}>
+        <button onClick={() => { setMeals([]); setMode(null); }} style={{ background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:"0.83rem",fontFamily:"'DM Sans',sans-serif" }}>← New search</button>
+        <span style={{ fontSize:"0.78rem", color:T.muted, background:T.cream, padding:"0.25rem 0.75rem", borderRadius:"20px" }}>{cardIdx+1} / {meals.length}</span>
+        <button onClick={() => generate(true)} style={{ background:"none",border:"none",color:T.forest,cursor:"pointer",fontSize:"0.83rem",fontFamily:"'DM Sans',sans-serif",fontWeight:"500" }}>+ More</button>
+      </div>
+
+      <div style={{ background:T.surface, borderRadius:"20px", border:`1px solid ${T.border}`, overflow:"hidden", boxShadow:"0 2px 20px rgba(0,0,0,0.06)", animation:"fadeUp 0.2s ease" }}>
+
+        {/* Cat placeholder */}
+        <div style={{ height:110, background:`linear-gradient(135deg, ${T.cream} 0%, #E8DDD0 100%)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"3rem", letterSpacing:"0.5rem" }}>
+          🐾🍳🐾
+        </div>
+
+        <div style={{ padding:"1.25rem 1.25rem 1.5rem" }}>
+          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"0.75rem", marginBottom:"0.6rem" }}>
+            <h3 style={{ fontFamily:"'Lora',serif", fontSize:"1.25rem", fontWeight:400, lineHeight:1.35 }}>{currentMeal.name}</h3>
+            <button onClick={handleSave} title={isSaved ? "Remove from saved" : "Save recipe"} style={{
+              background: isSaved ? T.tag1 : T.cream,
+              border: `1.5px solid ${isSaved ? T.forest : T.border}`,
+              borderRadius:"50%", width:40, height:40, fontSize:"1.1rem",
+              cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center",
+              animation: saveAnim ? "pop 0.4s ease" : "none", transition:"background 0.2s, border 0.2s",
+            }}>{isSaved ? "💚" : "🤍"}</button>
+          </div>
+
+          <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap", marginBottom:"0.85rem" }}>
+            <Tag label={currentMeal.cuisine || prefs.cuisine} type="green" />
+            <Tag label={`⏱ ${currentMeal.time}`} type="orange" />
+          </div>
+
+          <p style={{ fontSize:"0.85rem", color:T.muted, lineHeight:1.65, marginBottom:"1.25rem" }}>{currentMeal.desc}</p>
+
+          <div style={{ marginBottom:"1.25rem" }}>
+            <SectionLabel>Ingredients</SectionLabel>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem" }}>
+              {(currentMeal.ingredients||[]).map((ing,i) => (
+                <span key={i} style={{ background:T.cream, color:T.ink, padding:"0.2rem 0.6rem", borderRadius:"20px", fontSize:"0.75rem" }}>{ing}</span>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <SectionLabel>Steps</SectionLabel>
+            {(currentMeal.steps||[]).map((s,i) => (
+              <div key={i} style={{ display:"flex", gap:"0.75rem", marginBottom:"0.6rem" }}>
+                <span style={{ width:22, height:22, borderRadius:"50%", background:T.forest, color:"#fff", fontSize:"0.68rem", fontWeight:"700", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:2 }}>{i+1}</span>
+                <p style={{ fontSize:"0.83rem", color:T.ink, lineHeight:1.65 }}>{s}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:"1.1rem", gap:"0.75rem" }}>
+        <Btn variant="ghost" onClick={() => setCardIdx(i => Math.max(0,i-1))} disabled={cardIdx===0}>← Prev</Btn>
+        <Btn variant="ghost" onClick={() => setCardIdx(i => Math.min(meals.length-1,i+1))} disabled={cardIdx===meals.length-1}>Next →</Btn>
+      </div>
+    </div>
+  );
+
+  return null;
+}
+
+// ── MY MEALS SCREEN ────────────────────────────────────────────────────────
+function MyMealsScreen({ meals, onRemove }) {
+  const [filterCuisine, setFilterCuisine] = useState("All");
+  const [filterFormat, setFilterFormat] = useState("All");
+  const [expanded, setExpanded] = useState(null);
+
+  const cuisines = ["All", ...new Set(meals.map(m => m.cuisine).filter(Boolean))];
+
+  const filtered = meals.filter(m => {
+    if (filterCuisine !== "All" && m.cuisine !== filterCuisine) return false;
+    if (filterFormat !== "All" && FORMATS.find(f=>f.label===filterFormat)?.id !== m.format) return false;
+    return true;
+  });
+
+  if (meals.length === 0) return (
+    <div style={{ textAlign:"center", padding:"5rem 1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <div style={{ fontSize:"3rem", marginBottom:"1rem" }}>🐾</div>
+      <h3 style={{ fontFamily:"'Lora',serif", fontSize:"1.3rem", fontWeight:400, marginBottom:"0.5rem" }}>No saved recipes yet</h3>
+      <p style={{ color:T.muted, fontSize:"0.85rem" }}>Head to Discover and tap 🤍 to save meals you love.</p>
+    </div>
+  );
+
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:"1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <h2 style={{ fontFamily:"'Lora',serif", fontSize:"1.6rem", fontWeight:400, marginBottom:"1.1rem" }}>My Meals</h2>
+
+      <div style={{ marginBottom:"1rem" }}>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem", marginBottom:"0.4rem" }}>
+          {cuisines.map(c => <Pill key={c} label={c} active={filterCuisine===c} onClick={() => setFilterCuisine(c)} small />)}
+        </div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem" }}>
+          {["All", ...FORMATS.map(f=>f.label)].map(f => <Pill key={f} label={f} active={filterFormat===f} onClick={() => setFilterFormat(f)} small />)}
+        </div>
+      </div>
+
+      <p style={{ fontSize:"0.75rem", color:T.muted, marginBottom:"1rem" }}>{filtered.length} recipe{filtered.length!==1?"s":""}</p>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:"0.65rem" }}>
+        {filtered.map((m,i) => (
+          <div key={i} style={{ background:T.surface, borderRadius:"14px", border:`1px solid ${T.border}`, overflow:"hidden" }}>
+            <div onClick={() => setExpanded(expanded===i ? null : i)} style={{ padding:"0.9rem 1.1rem", cursor:"pointer", display:"flex", alignItems:"center", gap:"0.75rem" }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:"500", fontSize:"0.9rem", marginBottom:"0.3rem" }}>{m.name}</div>
+                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                  <Tag label={m.cuisine || "Mixed"} type="green" />
+                  <Tag label={`⏱ ${m.time}`} type="orange" />
+                </div>
+              </div>
+              <span style={{ color:T.muted, fontSize:"0.75rem" }}>{expanded===i ? "▲" : "▼"}</span>
+            </div>
+
+            {expanded===i && (
+              <div style={{ padding:"0 1.1rem 1rem", borderTop:`1px solid ${T.border}`, animation:"fadeUp 0.2s ease" }}>
+                <p style={{ fontSize:"0.82rem", color:T.muted, lineHeight:1.65, margin:"0.75rem 0" }}>{m.desc}</p>
+
+                <div style={{ marginBottom:"0.85rem" }}>
+                  <SectionLabel>Ingredients</SectionLabel>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem" }}>
+                    {(m.ingredients||[]).map((ing,j) => <span key={j} style={{ background:T.cream, color:T.ink, padding:"0.15rem 0.55rem", borderRadius:"20px", fontSize:"0.72rem" }}>{ing}</span>)}
+                  </div>
+                </div>
+
+                <div style={{ marginBottom:"0.85rem" }}>
+                  <SectionLabel>Steps</SectionLabel>
+                  {(m.steps||[]).map((s,j) => (
+                    <div key={j} style={{ display:"flex", gap:"0.65rem", marginBottom:"0.45rem" }}>
+                      <span style={{ width:20,height:20,borderRadius:"50%",background:T.forest,color:"#fff",fontSize:"0.65rem",fontWeight:"700",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2 }}>{j+1}</span>
+                      <p style={{ fontSize:"0.81rem", color:T.ink, lineHeight:1.65 }}>{s}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <Btn small variant="danger" onClick={() => { onRemove(m.name); setExpanded(null); }}>Remove recipe</Btn>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── SETTINGS SCREEN ────────────────────────────────────────────────────────
+function SettingsScreen({ prefs, onUpdatePrefs, onUpdateKey, onReset }) {
+  const [editingPrefs, setEditingPrefs] = useState(false);
+  const [newKey, setNewKey] = useState("");
+  const [keySaved, setKeySaved] = useState(false);
+
+  if (editingPrefs) return (
+    <PreferencesScreen initial={prefs} onSave={p => { onUpdatePrefs(p); setEditingPrefs(false); }} onBack={() => setEditingPrefs(false)} />
+  );
+
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:"1.5rem", animation:"fadeUp 0.4s ease" }}>
+      <h2 style={{ fontFamily:"'Lora',serif", fontSize:"1.6rem", fontWeight:400, marginBottom:"1.5rem" }}>Settings</h2>
+
+      <div style={{ background:T.surface, borderRadius:"14px", border:`1px solid ${T.border}`, padding:"1.1rem", marginBottom:"0.85rem" }}>
+        <SectionLabel>Preferences</SectionLabel>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem", marginBottom:"0.85rem" }}>
+          <Tag label={prefs.cuisine} type="green" />
+          <Tag label={FORMATS.find(f=>f.id===prefs.format)?.label||""} type="green" />
+          {(prefs.dietary||[]).map(d => <Tag key={d} label={d} type="orange" />)}
+        </div>
+        <Btn small variant="secondary" onClick={() => setEditingPrefs(true)}>Edit preferences</Btn>
+      </div>
+
+      <div style={{ background:T.surface, borderRadius:"14px", border:`1px solid ${T.border}`, padding:"1.1rem", marginBottom:"0.85rem" }}>
+        <SectionLabel>API Key</SectionLabel>
+        <input type="password" placeholder="Paste new key to update"
+          value={newKey} onChange={e => setNewKey(e.target.value)}
+          style={{ width:"100%", padding:"0.65rem 0.85rem", borderRadius:"8px", border:`1.5px solid ${T.border}`, fontFamily:"'DM Sans',sans-serif", fontSize:"0.82rem", background:T.bg, color:T.ink, marginBottom:"0.75rem" }} />
+        <div style={{ display:"flex", alignItems:"center", gap:"0.75rem" }}>
+          <Btn small onClick={() => { if(newKey.trim()) { onUpdateKey(newKey.trim()); setNewKey(""); setKeySaved(true); setTimeout(()=>setKeySaved(false),2000); }}}>Update key</Btn>
+          {keySaved && <span style={{ color:T.forest, fontSize:"0.78rem" }}>✓ Saved</span>}
+        </div>
+      </div>
+
+      <div style={{ background:T.surface, borderRadius:"14px", border:`1px solid ${T.border}`, padding:"1.1rem" }}>
+        <SectionLabel>Reset</SectionLabel>
+        <p style={{ fontSize:"0.8rem", color:T.muted, marginBottom:"0.75rem" }}>Clears all saved meals, preferences and API key.</p>
+        <Btn small variant="danger" onClick={() => { if(window.confirm("Reset all Nekocook data?")) onReset(); }}>Reset all data</Btn>
+      </div>
+
+      <p style={{ color:T.muted, fontSize:"0.73rem", marginTop:"2rem", textAlign:"center", lineHeight:1.6 }}>
+        Nekocook v1 · Shopping list coming in v2 🐾<br/>
+        Get your API key at platform.claude.com
+      </p>
+    </div>
+  );
+}
+
+// ── BOTTOM NAV ─────────────────────────────────────────────────────────────
+function BottomNav({ tab, setTab, savedCount }) {
+  const items = [
+    { id:"discover", icon:"🔍", label:"Discover" },
+    { id:"meals", icon:"🐾", label: savedCount > 0 ? `Saved (${savedCount})` : "My Meals" },
+    { id:"settings", icon:"⚙️", label:"Settings" },
+  ];
+  return (
+    <div style={{
+      position:"fixed", bottom:0, left:0, right:0,
+      background:T.surface, borderTop:`1px solid ${T.border}`,
+      display:"flex", justifyContent:"space-around",
+      padding:"0.6rem 0 calc(0.85rem + env(safe-area-inset-bottom))",
+      zIndex:50, backdropFilter:"blur(10px)",
+    }}>
+      {items.map(item => (
+        <button key={item.id} onClick={() => setTab(item.id)} style={{
+          background:"none", border:"none", cursor:"pointer",
+          display:"flex", flexDirection:"column", alignItems:"center", gap:"0.2rem",
+          fontFamily:"'DM Sans',sans-serif", padding:"0 1rem",
+        }}>
+          <span style={{ fontSize:"1.2rem" }}>{item.icon}</span>
+          <span style={{ fontSize:"0.65rem", color: tab===item.id ? T.forest : T.muted, fontWeight: tab===item.id ? "600" : "400", transition:"color 0.15s" }}>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── APP ────────────────────────────────────────────────────────────────────
+function App() {
+  const [apiKey, setApiKey] = useState(() => store("neko_key") || "");
+  const [prefs, setPrefs] = useState(() => store("neko_prefs") || null);
+  const [savedMeals, setSavedMeals] = useState(() => store("neko_meals") || []);
+  const [tab, setTab] = useState("discover");
+  const [screen, setScreen] = useState("init");
+
+  useEffect(() => {
+    if (!apiKey) { setScreen("apikey"); return; }
+    if (!prefs) { setScreen("welcome"); return; }
+    setScreen("main");
+  }, []);
+
+  useEffect(() => { if (apiKey) store("neko_key", apiKey); }, [apiKey]);
+  useEffect(() => { if (prefs) store("neko_prefs", prefs); }, [prefs]);
+  useEffect(() => { store("neko_meals", savedMeals); }, [savedMeals]);
+
+  function handleAuth() { setScreen("prefs"); }
+  function handlePrefs(p) { setPrefs(p); store("neko_prefs", p); setScreen("main"); }
+  function handleSaveMeal(meal) {
+    setSavedMeals(prev => prev.some(m => m.name === meal.name) ? prev.filter(m => m.name !== meal.name) : [...prev, meal]);
+  }
+  function handleRemoveMeal(name) { setSavedMeals(prev => prev.filter(m => m.name !== name)); }
+  function handleReset() {
+    ["neko_key","neko_prefs","neko_meals"].forEach(k => localStorage.removeItem(k));
+    setApiKey(""); setPrefs(null); setSavedMeals([]); setScreen("apikey");
+  }
+  function handleUpdatePrefs(p) { setPrefs(p); store("neko_prefs", p); }
+  function handleUpdateKey(k) { setApiKey(k); store("neko_key", k); }
+
+  if (screen === "init") return null;
+
+  return (
+    <div style={{ fontFamily:"'DM Sans',sans-serif", background:T.bg, minHeight:"100vh" }}>
+
+      {screen === "main" && (
+        <div style={{ position:"sticky", top:0, zIndex:40, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0.85rem 1.5rem", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:"1.2rem", color:T.ink }}>Nekocook</span>
+          <span style={{ fontSize:"1.1rem" }}>🐾</span>
+        </div>
+      )}
+
+      <div style={{ paddingBottom: screen==="main" ? "85px" : "0", minHeight:"100vh" }}>
+        {screen === "apikey" && <ApiKeyScreen onSave={k => { setApiKey(k); store("neko_key",k); setScreen("welcome"); }} />}
+        {screen === "welcome" && <WelcomeScreen onContinue={handleAuth} />}
+        {screen === "prefs" && <PreferencesScreen onSave={handlePrefs} />}
+        {screen === "main" && tab === "discover" && (
+          <DiscoverScreen
+            prefs={prefs} apiKey={apiKey} savedMeals={savedMeals}
+            onSave={handleSaveMeal} onEditPrefs={() => setTab("settings")}
+          />
+        )}
+        {screen === "main" && tab === "meals" && <MyMealsScreen meals={savedMeals} onRemove={handleRemoveMeal} />}
+        {screen === "main" && tab === "settings" && (
+          <SettingsScreen
+            prefs={prefs} onUpdatePrefs={handleUpdatePrefs}
+            onUpdateKey={handleUpdateKey} onReset={handleReset}
+          />
+        )}
+      </div>
+
+      {screen === "main" && <BottomNav tab={tab} setTab={setTab} savedCount={savedMeals.length} />}
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>
