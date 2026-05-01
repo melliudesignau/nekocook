@@ -71,7 +71,7 @@ async function askClaude(apiKey, system, user, maxTokens = 2000) {
     }),
   });
   const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
+  if (data.error) throw new Error(`${res.status}: ${JSON.stringify(data.error)}`);
   return data.content.map(b => b.text || "").join("");
 }
 
@@ -312,7 +312,7 @@ Return ONLY this JSON array:
       setMeals(prev => append ? [...prev, ...data] : data);
       if (!append) setCardIdx(0);
     } catch(e) {
-      setError("Couldn't reach AI. Check your API key in Settings.");
+      setError(e.message || "Unknown error");
     }
     setLoading(false);
   }
